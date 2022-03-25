@@ -45,18 +45,18 @@ class L2Switch(app_manager.RyuApp):
 
         self.mac_ports.setdefault(dpid,{})
 
-        self.logger.info("packet in %s %s %s %s", dpid, source, dest, msg.in_port)
+        # self.logger.info("packet in %s %s %s %s", dpid, source, dest, msg.in_port)
 
         self.mac_ports[dpid][source] = msg.in_port
 
         if dest in self.mac_ports[dpid]:
-            out_port = self.mac_ports[dpid]
+            out_port = self.mac_ports[dpid][source]
         
         else:
             out_port = ofp.OFPP_FLOOD
 
         # o que o switch vai fazer é enviar a mensagem para o out_port
-        #OFPActionOutput class é useda com uma mensagem packet_out para especificar uma porta de switch da qual você deseja enviar o pacote. 
+        #OFPActionOutput class é usada com uma mensagem packet_out para especificar uma porta de switch da qual você deseja enviar o pacote. 
         
         actions = [ofp_parser.OFPActionOutput(out_port)]
 
@@ -79,7 +79,7 @@ class L2Switch(app_manager.RyuApp):
             actions=actions, data = data)
         dp.send_msg(out)
 
-
+    
     #Pq é constituido um flow mod de OF?
     def adiciona_flow(self,dpath,in_port,dst,src,actions):
         ofp = dpath.ofproto
