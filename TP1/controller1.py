@@ -1,114 +1,132 @@
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_0
-from ryu.lib.mac import haddr_to_bin
+from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ether_types
 
 
+class SimpleSwitch13(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
-class L2Switch(app_manager.RyuApp):
-    
     def __init__(self, *args, **kwargs):
-        super(L2Switch, self).__init__(*args, **kwargs)
-        self.mac_ports = {}
+        super(SimpleSwitch13, self).__init__(*args, **kwargs)
+        self.mac_to_port = {}
+
+
+    # the switch_features_handler will 
+    # listen on this event and add a send all flow to controller flow on the switch.(table-miss flow)
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # install table-miss flow entry
+        #
+        # We specify NO BUFFER to max_len of the output action due to
+        # OVS bug. At this moment, if we specify a lesser number, e.g.,
+        # 128, OVS will send Packet-In with invalid buffer_id and
+        # truncated packet data. In that case, we cannot output packets
+        # correctly.  The bug has been fixed in OVS v2.1.0.
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
+
+    def add_flow(self, datapath, priority, match, actions, buffer_id=None):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+                                             actions)]
+        if buffer_id:
+            mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
+                                    priority=priority, match=match,
+                                    instructions=inst)
+        else:
+            mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                    match=match, instructions=inst)
+        
+        # é enviada uma flow modification message
+        # criamos assim flow entry na tabela do switch
+        datapath.send_msg(mod)
 
 
     # decorador que diz ao ryu quando a função deverá ser chamada
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER) # Switch-features message received and sent set-config message, this function is called only after the negotiation completes.
-    def packet_in_handler(self, ev):
-        msg = ev.msg #object that represents a packet_in data structure. An object que descreve a correspondente OpenFlow message 
-
-        dp = msg.datapath # object that represents a datapath (switch). basicamente é o switch de onde recebemos o packet
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def _packet_in_handler(self, ev):
         
-
-        # são objectos que representam o protocolo openFlow negociado entre Ryu e o switch
-        ofp = dp.ofproto 
-        ofp_parser = dp.ofproto_parser
-
+        # If you hit this you might want to increase
+        # the "miss_send_length" of your switch
+        if ev.msg.msg_len < ev.msg.total_len:
+            self.logger.debug("packet truncated: only %s of %s bytes",
+                              ev.msg.msg_len, ev.msg.total_len)
+        
+        msg = ev.msg # object that represents a packet_in data structure. An object que descreve a correspondente OpenFLow message
+        datapath = msg.datapath # object that represents a datapath (switch). basicamente é o switch de onde recebemos o packet
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
 
         pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocol(ethernet.ethernet)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+
 
         # vamos ignorar link layer discovery protocol packets
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            # ignore lldp packet
             return
-
-        dest = eth.dst
-        source = eth.src
+        dst = eth.dst
+        src = eth.src
 
         #id de switch
-        dpid = dp.id
+        dpid = format(datapath.id, "d").zfill(16)
+        self.mac_to_port.setdefault(dpid, {})
 
-        self.mac_ports.setdefault(dpid,{})
+        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
-        # self.logger.info("packet in %s %s %s %s", dpid, source, dest, msg.in_port)
+        # Learn the port for the source MAC, which essentially means to populate
+        # the dictionary with the input packet’s source MAC Address and input port.
+        self.mac_to_port[dpid][src] = in_port
 
-        self.mac_ports[dpid][source] = msg.in_port
-
-        if dest in self.mac_ports[dpid]:
-            out_port = self.mac_ports[dpid][source]
-        
+   
+        # Then use that same dictionary and with the destination MAC address find out the packet’s destination
+        # port. If is not null, you now have what you need to create a of_flow_mod
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
         else:
-            out_port = ofp.OFPP_FLOOD
+            out_port = ofproto.OFPP_FLOOD
 
-        # o que o switch vai fazer é enviar a mensagem para o out_port
+
+        # O que o switch vai fazer é enviar a mensagem para o out_port
         #OFPActionOutput class é usada com uma mensagem packet_out para especificar uma porta de switch da qual você deseja enviar o pacote. 
-        
-        actions = [ofp_parser.OFPActionOutput(out_port)]
+        actions = [parser.OFPActionOutput(out_port)]
 
-        #vamos adicionar novo flow à nossa tabela de entradas de flows
+         #vamos adicionar novo flow à nossa tabela de entradas de flows
         #adicionamos novo flow com timeout e cenas especificas
 
-        if out_port != ofp.OFPP_FLOOD:
-            self.adiciona_flow(dp,msg.in_port,dest,source,actions)
-            
-            
 
+        
+        # install a flow to avoid packet_in next time
+        # If is not null, you now have what you need to create a of_flow_mod object with a match field
+        # (destination MAC address) and a action field (sent to ’destination port’)
+        if out_port != ofproto.OFPP_FLOOD:
+            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+            # verify if we have a valid buffer_id, if yes avoid to send both
+            # flow_mod & packet_out
+            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                return
+            else:
+                self.add_flow(datapath, 1, match, actions)
         data = None
-        if msg.buffer_id == ofp.OFP_NO_BUFFER:
-             data = msg.data
-
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
 
         #classe OFPPacketOut class é usada para construir um packet_out message
-        out = ofp_parser.OFPPacketOut(
-            datapath=dp, buffer_id=msg.buffer_id, in_port=msg.in_port,
-            actions=actions, data = data)
-        dp.send_msg(out)
-
-    
-    #Pq é constituido um flow mod de OF?
-    def adiciona_flow(self,dpath,in_port,dst,src,actions):
-        ofp = dpath.ofproto
-
-        #o match que é dado mal chegue um pacote
-        match = dpath.ofproto_parser.OFPMatch(
-            in_port = in_port,
-            dls_dst = haddr_to_bin(dst), 
-            dl_src=haddr_to_bin(src)
-        )
-
-        mod = dpath.ofproto_parser.OFPFlowMod(
-            datapath = dpath,
-            match = match,
-            cookie = 0,
-            command= ofp.OFPFC_ADD,
-            idle_timeout=0,
-            hard_timeout=0,
-            priority=ofp.OFP_DEFAULT_PRIORITY,
-            flags=ofp.OFPFF_SEND_FLOW_REM, 
-            actions=actions
-        )
-        # é enviada uma flow modification message
-        # criamos assim flow entry na tabela do switch
-        dpath.send_msg(mod)
-
-
-        
-        
-        
-
-        
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                  in_port=in_port, actions=actions, data=data)
+        datapath.send_msg(out)
