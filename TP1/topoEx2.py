@@ -1,53 +1,67 @@
-from asyncio import protocols
-from mininet.topo import Topo 
-from mininet.node import Controller, RemoteController, OVSKernelSwitch, UserSwitch
+from mininet.net import Mininet
+
+from mininet.node import Controller, RemoteController, OVSSwitch, UserSwitch
+
 from mininet.cli import CLI
+
 from mininet.log import setLogLevel
+
 from mininet.link import Link, TCLink
 
-class MyTopo( Topo ):
-    "TP2 topoEx2 example."
+print ("Starting Mininet")
+net = Mininet(controller = RemoteController, switch = OVSSwitch, autoSetMacs = False)
 
-    def build( self ):
-        "Create custom topoEx2."
+print ("Adding controllers")
+c1 = net.addController('c1',controller=RemoteController,ip = '127.0.0.1',port=6633)
+c2 = net.addController('c2',controller=RemoteController,ip = '127.0.0.1', port=6634)
 
-        # Add hosts and switches
-        switch1 = self.addSwitch("s1",dpid = "0000000001",protocol = "OpenFlow13")
-        h11 = self.addHost( 'h11', ip = "10.0.0.2/24", defaultroute = "via 10.0.0.1" )
-        h21 = self.addHost( 'h21', ip = "10.0.0.3/24", defaultroute = "via 10.0.0.1" )
-        h31 = self.addHost( 'h31', ip = "10.0.0.4/24", defaultroute = "via 10.0.0.1" )
-        # Add links
-        self.addLink( h11, switch1 )
-        self.addLink( h21, switch1 )
-        self.addLink( h31, switch1 )
+s1 = net.addSwitch('s1',cls = OVSSwitch,dpid="0000000000000001")
+s2 = net.addSwitch('s2',cls = OVSSwitch,dpid="0000000000000002")
+s3 = net.addSwitch('s3',cls = OVSSwitch,dpid="0000000000000003")
 
-        # Add hosts and switches
-        switch2 = self.addSwitch("s2",dpid = "0000000002",protocol = "OpenFlow13")
-        h12 = self.addHost( 'h12', ip = "10.0.1.2/24", defaultroute = "via 10.0.1.1" )
-        h22 = self.addHost( 'h22', ip = "10.0.1.3/24", defaultroute = "via 10.0.1.1" )
-        h32 = self.addHost( 'h32', ip = "10.0.1.4/24", defaultroute = "via 10.0.1.1" )
-        # Add links
-        self.addLink( h12, switch2 )
-        self.addLink( h22, switch2 )
-        self.addLink( h32, switch2, delay = '5ms')
+print("Created l3switch")
+l3switch = net.addSwitch('l3switch',cls=OVSSwitch,dpid="0000000000000004")
 
-        # Add hosts and switches
-        switch3 = self.addSwitch("s3",dpid = "0000000003",protocol = "OpenFlow13")
-        h13 = self.addHost( 'h13', ip = "10.0.2.2/24", defaultroute = "via 10.0.2.1" )
-        h23 = self.addHost( 'h23', ip = "10.0.2.3/24", defaultroute = "via 10.0.2.1" )
-        h33 = self.addHost( 'h33', ip = "10.0.2.4/24", defaultroute = "via 10.0.2.1" )
-        # Add links
-        self.addLink( h13, switch3 )
-        self.addLink( h23, switch3 )
-        self.addLink( h33, switch3, loss = 10)
+h1 = net.addHost('h1', ip = '10.0.0.2', mac="00:00:00:00:00:02", defaultroute = 'via 10.0.0.1')
+h2 = net.addHost('h2', ip = '10.0.0.3', mac="00:00:00:00:00:03", defaultroute = 'via 10.0.0.1')
+h3 = net.addHost('h3', ip = '10.0.0.4', mac="00:00:00:00:00:04", defaultroute = 'via 10.0.0.1')
+h4 = net.addHost('h4', ip = '10.0.1.2', mac="00:00:00:00:01:02", defaultroute = 'via 10.0.1.1')
+h5 = net.addHost('h5', ip = '10.0.1.3', mac="00:00:00:00:01:03", defaultroute = 'via 10.0.1.1')
+h6 = net.addHost('h6', ip = '10.0.1.4', mac="00:00:00:00:01:04", defaultroute = 'via 10.0.1.1')
+h7 = net.addHost('h7', ip = '10.0.2.2', mac="00:00:00:00:02:02", defaultroute = 'via 10.0.2.1')
+h8 = net.addHost('h8', ip = '10.0.2.3', mac="00:00:00:00:02:03", defaultroute = 'via 10.0.2.1')
+h9 = net.addHost('h9', ip = '10.0.2.4', mac="00:00:00:00:02:04", defaultroute = 'via 10.0.2.1')
 
-        
-        switchL3 = self.addSwitch("swl3",dpid = "0000000004",protocol = "OpenFlow13")
-        self.addLink( switch1, switchL3, delay = '5ms')
-        self.addLink( switch2, switchL3 )
-        self.addLink( switch3, switchL3 )
+net.addLink(s1,l3switch)
+net.addLink(s2,l3switch)
+net.addLink(s3,l3switch)
 
-        
+net.addLink(h1,s1)
+net.addLink(h2,s1)
+net.addLink(h3,s1)
 
+net.addLink(h4,s2)
+net.addLink(h5,s2)
+net.addLink(h6,s2)
 
-topos = { 'mytopo': ( lambda: MyTopo() ) }
+net.addLink(h7,s3)
+net.addLink(h8,s3)
+net.addLink(h9,s3)
+
+l3switch.setMAC('B9:B5:3D:9A:E3:66','l3switch-eth1')
+l3switch.setMAC('E2:FA:8A:1F:99:10','l3switch-eth2')
+l3switch.setMAC('75:5D:00:B4:73:34','l3switch-eth3')
+
+net.build()
+
+c1.start()
+c2.start()
+
+s1.start([c1])
+s2.start([c1])
+s3.start([c1])
+l3switch.start([c2])
+
+CLI(net)
+
+net.stop()
