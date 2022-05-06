@@ -25,23 +25,23 @@ class L3switch(app_manager.RyuApp):
 
         # aqui definimos as interfaces que possuimos no router/l3switch e seus dados = routing_table
         #                              ip_host    interface ip/network ip / port 
-        self.interfaces_routing = { "10.0.0.2/24":["10.0.0.1", "10.0.0.0/24",1],
-                                    "10.0.0.3/24":["10.0.0.1", "10.0.0.0/24",1],
-                                    "10.0.0.4/24":["10.0.0.1", "10.0.0.0/24",1],
-                                    "10.0.1.2/24":["10.0.1.1", "10.0.1.0/24",2],
-                                    "10.0.1.3/24":["10.0.1.1", "10.0.1.0/24",2],
-                                    "10.0.1.4/24":["10.0.1.1", "10.0.1.0/24",2],
-                                    "10.0.2.2/24":["10.0.2.1", "10.0.2.0/24",3],
-                                    "10.0.2.3/24":["10.0.2.1", "10.0.2.0/24",3],
-                                    "10.0.2.4/24":["10.0.2.1", "10.0.2.0/24",3],
+        self.interfaces_routing = { "10.0.0.2":["10.0.0.1", "10.0.0.0/24",1],
+                                    "10.0.0.3":["10.0.0.1", "10.0.0.0/24",1],
+                                    "10.0.0.4":["10.0.0.1", "10.0.0.0/24",1],
+                                    "10.0.1.2":["10.0.1.1", "10.0.1.0/24",2],
+                                    "10.0.1.3":["10.0.1.1", "10.0.1.0/24",2],
+                                    "10.0.1.4":["10.0.1.1", "10.0.1.0/24",2],
+                                    "10.0.2.2":["10.0.2.1", "10.0.2.0/24",3],
+                                    "10.0.2.3":["10.0.2.1", "10.0.2.0/24",3],
+                                    "10.0.2.4":["10.0.2.1", "10.0.2.0/24",3],
                                 }
 
         # Definimos os macs dessas Interfaces
         # Foram gerados aleatoriamente
         # Tem de ser iguais aos do mininet
-        self.ip_mac = {"10.0.0.1":"B9:B5:3D:9A:E3:66",
+        self.ip_mac = {"10.0.0.1":"F6:C5:73:99:F4:F7",
                         "10.0.1.1":"E2:FA:8A:1F:99:10",
-                        "10.0.2.1":"75:5D:00:B4:73:34"}
+                        "10.0.2.1":"C6:43:79:7E:EA:6B"}
 
 
         # Cache de ARP
@@ -115,6 +115,10 @@ class L3switch(app_manager.RyuApp):
         if pkt_eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # ignore lldp packet
             return
+
+        if pkt_eth.ethertype == ether_types.ETH_TYPE_IPV6:
+            # ignore ipv6
+            return
         
 
         #------------ ARP 
@@ -126,20 +130,24 @@ class L3switch(app_manager.RyuApp):
             # se o ip for meu?
             self.handle_arp(datapath,in_port,pkt_eth,pkt_arp)
             return
+        
 
-        #------------ ICMP
+
+
+        #------------ Caso não seja ARP vai ser IPv4, mas vemos se é ICMP ping para o router/L3Switch
         pkt_icmp =  pkt.get_protocol(icmp.icmp)
         pkt_ipv4 = pkt.get_protocol(ipv4.ipv4)
 
         if pkt_icmp:           
             self.handle_icmp(datapath,in_port,pkt_eth,pkt_ipv4,pkt_icmp)
             return
-
-            
+        
         #------------ ONLY IPv4
         if pkt_ipv4:
-            self.handle_ipv4(datapath,in_port,pkt_eth,pkt_ipv4)
-            return 
+           self.handle_ipv4(datapath,in_port,pkt_eth,pkt_ipv4) 
+
+            
+        
         
 
 
@@ -186,7 +194,10 @@ class L3switch(app_manager.RyuApp):
                 ofproto = datapath.ofproto
                 parser = datapath.ofproto_parser
                 pkt.serialize()
-                self.logger.info("packet-out without arp request %s" % (pkt,))
+                self.logger.info("packet-out with ARP REPLY %s" % (pkt,))
+                self.logger.info("MAC WANTED !!!!!%s",mac_wanted)
+                self.logger.info("------------------------------------------------------------")
+
                 data = pkt.data
                 actions = [parser.OFPActionOutput(port=port)]
                 out = parser.OFPPacketOut(datapath=datapath,
@@ -202,6 +213,8 @@ class L3switch(app_manager.RyuApp):
         # termos de enviar um arp request
 
         # Com IP de host tenho dados sobre por onde vou dar forwarding do meu router/L3switch 
+        print("ENDEREÇO IP DE SRC: ",pkt_ipv4.src)
+
         data_ipdst = self.interfaces_routing[pkt_ipv4.src]
 
         # IP de interface do router/L3Switch
@@ -244,8 +257,11 @@ class L3switch(app_manager.RyuApp):
         pkt.serialize()
         if s == 0:
             self.logger.info("packet-out with forwarding IPv4 packet %s" % (pkt,))
+            self.logger.info("------------------------------------------------------------")
+
         else:
             self.logger.info("packet-out with ARP Request %s" % (pkt,))
+            self.logger.info("------------------------------------------------------------")
 
         data = pkt.data
         actions = [parser.OFPActionOutput(port=port)]
@@ -293,7 +309,9 @@ class L3switch(app_manager.RyuApp):
             ofproto = datapath.ofproto
             parser = datapath.ofproto_parser
             pkt.serialize()
-            self.logger.info("packet-out with icmp echo ping %s" % (pkt,))
+            self.logger.info("packet-out with ICMP ECHO PING REPLY %s" % (pkt,))
+            self.logger.info("------------------------------------------------------------")
+            
             data = pkt.data
             actions = [parser.OFPActionOutput(port=port)]
             out = parser.OFPPacketOut(datapath=datapath,
@@ -302,3 +320,4 @@ class L3switch(app_manager.RyuApp):
                                     actions=actions,
                                     data=data)
             datapath.send_msg(out)
+
